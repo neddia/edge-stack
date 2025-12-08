@@ -1,0 +1,25 @@
+app:
+  name: "{site-name}-app"
+  description: "RS485 VFD nodes for {site-name}"
+
+device_profile:
+  name: "wio-e5"
+  region_id: "us915_1"        # matches your region_us915_1.toml
+  mac_version: "1.0.4"
+  reg_params_revision: "RP002-1.0.3"
+  supports_class_b: false
+  supports_class_c: true
+
+gateway:
+  name: "{site-name}-gw"
+  description: "Heltec USB concentrator"
+
+devices:
+  - name: "edge-001-vfd"
+    description: "RS485 node 1"
+    dev_eui: "REPLACE_DEV_EUI_1"
+    app_key: "REPLACE_APP_KEY_OR_USE_DEFAULT"
+  - name: "edge-002-vfd"
+    description: "RS485 node 2"
+    dev_eui: "REPLACE_DEV_EUI_2"
+    app_key: "REPLACE_APP_KEY_OR_USE_DEFAULT"

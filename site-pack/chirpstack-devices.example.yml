@@ -1,0 +1,12 @@
+# Optional seed for ChirpStack device provisioning
+devices:
+  - dev_eui: REPLACE_EDGE1_DEV_EUI
+    name: edge-001
+    app_key: REPLACE_APPKEY_HEX
+    application_id: REPLACE_APP_ID
+    profile_id: REPLACE_PROFILE_ID
+  - dev_eui: REPLACE_EDGE2_DEV_EUI
+    name: edge-002
+    app_key: REPLACE_APPKEY_HEX
+    application_id: REPLACE_APP_ID
+    profile_id: REPLACE_PROFILE_ID

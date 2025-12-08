@@ -1,0 +1,113 @@
+site: example
+service_active: true
+
+# Edges and preferred transports
+edges:
+  - { id: edge-001, prefer: LORA, dev_eui: REPLACE_EDGE1_DEV_EUI, eth_mac: 00:00:00:00:00:01, allow_fallback: false }
+  - { id: edge-002, prefer: LORA, dev_eui: REPLACE_EDGE2_DEV_EUI, eth_mac: 00:00:00:00:00:02, allow_fallback: false }
+
+edge_pairs:
+  - id: fan-bank-a
+    primary: edge-001
+    secondary: edge-002
+
+edge_management:
+  heartbeat_every_s: 60
+  heartbeat_allow_fallback: false
+  edge_scan_every_s: 180
+  edge_discovery_port: 3333
+  edge_ip_ranges: [192.168.254.0/24]
+
+groupA: &groupA
+  edge_id: edge-001
+  model: huanyang-hy
+  polls:
+    - op: read_acv
+      period_s: 60
+    - op: read_out_a
+      period_s: 60
+    - op: read_out_hz
+      period_s: 60
+    - op: read_set_hz
+      period_s: 60
+  safe:
+    mode: safe
+    hz: 48
+    ttl_s: 15
+
+vfds:
+  - <<: *groupA
+    control_group: fan-bank-a
+    vfd_id: fan1
+    unit_id: 1
+    policy:
+      allow_auto: true
+      allow_boot: true
+      allow_safehz: true
+      boot_hz: 87.0
+  - <<: *groupA
+    control_group: fan-bank-a
+    vfd_id: fan2
+    unit_id: 2
+    policy:
+      allow_auto: false
+      allow_boot: false
+      allow_safehz: false
+      boot_hz: 87.0
+  - <<: *groupA
+    control_group: fan-bank-b
+    vfd_id: fan3
+    unit_id: 3
+    policy:
+      allow_auto: true
+      allow_boot: true
+      allow_safehz: true
+      boot_hz: 87.0
+
+miners:
+  scan_every_s: 300
+  poll_every_s: 60
+  timeout_ms: 800
+  concurrency: 64
+  influx_bucket: edge-site
+  ip_ranges: ["10.0.10.0/24"]
+  groups:
+    - { id: "row-a", control_group: fan-bank-a, ip_ranges: ["192.168.254.0/24"] }
+
+vfd_power_model:
+  measurement: vfd_telemetry
+  hz_field: out_hz
+  kw_field: kw
+  defaults:
+    base_hz: 400
+    motor_eff: 0.90
+    vfd_eff: 0.98
+    idle_w: 5
+    hp: 0.001
+    cal: { hz1: 220, kw1: 0.0132, hz2: 400, kw2: 0.0196 }
+
+physics:
+  gamma: 1.0
+  baseline_w: 5.0
+  fan_power_scale: 1.0
+
+control:
+  hz_min: 40
+  hz_max: 400
+  hz_step: 1
+  optimize_every_s: 300
+  lookback_fit: "60m"
+  slope_window_min: 45
+  fan95_cap: 0.92
+  hotspot_frac_threshold: 0.05
+  hotspot_max_up_hz: 1.0
+  ramp_hz: 50
+  deadband_hz: 0.5
+  min_dJ_frac: 0.005
+  bootstrap_hz: 42
+  default_slope: -0.0004
+  slope_min: -0.02
+  slope_max: -0.00001
+
+miner_types:
+  - { name: "antminer_s9se", num_miners: 1 }

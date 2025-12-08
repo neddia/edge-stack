@@ -1,0 +1,14 @@
+[Unit]
+Description=Semtech UDP packet forwarder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/home/edgeadm/sx1302_hal/packet_forwarder
+ExecStart=/home/edgeadm/sx1302_hal/packet_forwarder/lora_pkt_fwd
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

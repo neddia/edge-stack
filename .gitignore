@@ -1,0 +1,10 @@
+site-pack/.env
+site-pack/.secrets/
+site-pack/storage/site-config.yml
+site-pack/storage/provision-registry.json
+site-pack/storage/control-registry.json
+site-pack/storage/miners.db
+site-pack/storage/profiles/
+site-pack/lorawan.env
+artifacts/
+*.tar.gz
