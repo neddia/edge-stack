@@ -47,7 +47,11 @@ class CSClient:
         self.base_url = base_url.rstrip("/")
         self.h = httpx.Client(
             base_url=self.base_url,
-            headers={"Authorization": f"Bearer {token}"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                # Some CS deployments expect the gRPC metadata header; keep both.
+                "Grpc-Metadata-Authorization": f"Bearer {token}",
+            },
             timeout=10.0,
         )
 
@@ -56,8 +60,9 @@ class CSClient:
         r.raise_for_status()
         return r.json()
 
-    def _post(self, path: str, json: dict) -> dict:
-        r = self.h.post(path, json=json)
+    def _post(self, path: str, json: dict, wrapper: Optional[str] = None) -> dict:
+        body = {wrapper: json} if wrapper else json
+        r = self.h.post(path, json=body)
         r.raise_for_status()
         if r.content:
             return r.json()
@@ -85,7 +90,7 @@ class CSClient:
             "description": app.get("description", ""),
             "tenantId": tenant_id,
         }
-        res = self._post("/api/applications", payload)
+        res = self._post("/api/applications", payload, wrapper="application")
         return res.get("id") or res.get("applicationId") or ""
 
     def ensure_device_profile(self, tenant_id: str, dp: dict) -> str:
@@ -106,7 +111,7 @@ class CSClient:
             "supportsClassC": bool(dp.get("supports_class_c", False)),
             "supportsOtaa": True,
         }
-        res = self._post("/api/device-profiles", payload)
+        res = self._post("/api/device-profiles", payload, wrapper="deviceProfile")
         return res.get("id") or res.get("deviceProfileId") or ""
 
     def ensure_gateway(self, tenant_id: str, gw: dict, gateway_eui: str) -> str:
@@ -122,7 +127,7 @@ class CSClient:
             "description": gw.get("description", ""),
             "tenantId": tenant_id,
         }
-        self._post("/api/gateways", payload)
+        self._post("/api/gateways", payload, wrapper="gateway")
         return gw_id
 
     def ensure_device(self, dev: dict, app_id: str, dp_id: str, default_app_key: Optional[str] = None) -> None:
@@ -143,11 +148,11 @@ class CSClient:
             "deviceProfileId": dp_id,
             "isDisabled": False,
         }
-        self._post("/api/devices", payload)
+        self._post("/api/devices", payload, wrapper="device")
         app_key = lower_hex(dev.get("app_key") or default_app_key or "")
         if app_key:
             keys_payload = {"devEui": dev_eui, "appKey": app_key, "nwkKey": app_key}
-            self._post(f"/api/devices/{dev_eui}/keys", keys_payload)
+            self._post(f"/api/devices/{dev_eui}/keys", keys_payload, wrapper="deviceKeys")
 
 
 def main() -> None:

@@ -29,10 +29,14 @@ GRAFANA_PASS="$(rand_b32 16)"
 # Default app key for devices (can be overridden per-device)
 DEFAULT_APP_KEY="$(rand_hex 16)$(rand_hex 16)"
 
+# ChirpStack admin (standardized per-site); you still need to create this user/tenant in CS.
+CS_ADMIN_EMAIL="cs-admin-${SITE_ID}@edge.local"
+CS_ADMIN_PASSWORD="$(rand_b32 18)"
+
 cat > "$DEST/.env" <<EOF
 LOG_LEVEL=INFO
 SITE_CONFIG_PATH=/app/storage/site-config.yml
-PROFILES_DIR=/app/storage/profiles
+PROFILES_DIR=/app/profiles
 INFLUX_URL=http://influxdb:8086
 INFLUX_ORG=edge-org
 INFLUX_BUCKET=edge-site
@@ -80,8 +84,8 @@ cat > "$DEST/lorawan.env" <<EOF
 CHIRPSTACK_URL=http://chirpstack:8080
 CHIRPSTACK_TENANT_ID=
 CHIRPSTACK_APP_NAME=${SITE_ID}-app
-CHIRPSTACK_ADMIN_EMAIL=
-CHIRPSTACK_ADMIN_PASSWORD=
+CHIRPSTACK_ADMIN_EMAIL=$CS_ADMIN_EMAIL
+CHIRPSTACK_ADMIN_PASSWORD=$CS_ADMIN_PASSWORD
 # Optional default app key for cs-seed.py
 CHIRPSTACK_DEFAULT_APP_KEY=$DEFAULT_APP_KEY
 EOF
@@ -116,7 +120,7 @@ Fill in:
 - storage/site-config.yml
 - storage/profiles/
 - storage/chirpstack-devices.yml (DevEUIs, names; app_key can stay default)
-- site-pack/lorawan.env (ChirpStack admin/tenant creds)
+- site-pack/lorawan.env (ChirpStack tenant id; admin defaults to $CS_ADMIN_EMAIL with generated password)
 - site-pack/.secrets/chirpstack.api_key (or let init overlay create it)
 - Optional: storage/registry_*.json, miners.db if restoring
 EOF
@@ -125,4 +129,4 @@ echo "Generated site-pack for $SITE_ID at $DEST"
 echo "Influx admin user/pass/token stored in .secrets"
 echo "Grafana admin user/pass stored in .secrets/.env.grafana"
 echo "Default app key: $DEFAULT_APP_KEY"
-echo "Reminder: fill chirpstack admin/tenant in lorawan.env and DevEUIs in chirpstack-devices.yml"
+echo "Reminder: set ChirpStack tenant ID, create/approve the generated admin, and fill DevEUIs in chirpstack-devices.yml"

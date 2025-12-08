@@ -23,7 +23,7 @@ services:
       INFLUX_TOKEN_FILE: ${INFLUX_TOKEN_FILE:-/secrets/influx.token}
       # Storage paths inside container
       SITE_CONFIG_PATH: ${SITE_CONFIG_PATH:-/app/storage/site-config.yml}
-      PROFILES_DIR: ${PROFILES_DIR:-/app/storage/profiles}
+      PROFILES_DIR: ${PROFILES_DIR:-/app/profiles}
       STORAGE_DIR: ${STORAGE_DIR:-/app/storage}
       # ChirpStack endpoints by service name
       CS_GRPC_SERVER: ${CS_GRPC_SERVER:-chirpstack:8080}
