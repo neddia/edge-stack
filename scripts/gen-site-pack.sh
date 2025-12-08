@@ -9,6 +9,12 @@ if [ "$#" -lt 2 ]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Prefer a defaults/.env.smtp next to this repo; fall back to setpoint-seeds/defaults if present.
+PRIMARY_SMTP="${DEFAULTS_SMTP:-$ROOT/defaults/.env.smtp}"
+ALT_SMTP="$ROOT/../setpoint-seeds/defaults/.env.smtp"
+
 SITE_ID="$1"
 DEST="$(realpath "$2")"
 
@@ -45,7 +51,6 @@ INFLUX_TOKEN_FILE=/secrets/influx.token
 CS_GRPC_SERVER=chirpstack:8080
 CS_GRPC_TOKEN=
 CS_FPORT=1
-DEFAULT_DEV_EUI=
 LORA_CHUNK_CAP=220
 MQTT_HOST=chirpstack-mqtt:1883
 MQTT_USERNAME=
@@ -71,7 +76,12 @@ GF_SECURITY_ADMIN_PASSWORD=$GRAFANA_PASS
 # GF_INSTALL_PLUGINS=
 EOF
 
-cat > "$DEST/.secrets/.env.smtp" <<'EOF'
+if [ -f "$PRIMARY_SMTP" ]; then
+  cp "$PRIMARY_SMTP" "$DEST/.secrets/.env.smtp"
+elif [ -f "$ALT_SMTP" ]; then
+  cp "$ALT_SMTP" "$DEST/.secrets/.env.smtp"
+else
+  cat > "$DEST/.secrets/.env.smtp" <<'EOF'
 GF_SMTP_ENABLED=false
 GF_SMTP_HOST=
 GF_SMTP_USER=
@@ -79,6 +89,7 @@ GF_SMTP_PASSWORD=
 GF_SMTP_SKIP_VERIFY=true
 GF_SMTP_FROM_ADDRESS=
 EOF
+fi
 
 cat > "$DEST/lorawan.env" <<EOF
 CHIRPSTACK_URL=http://chirpstack:8080
