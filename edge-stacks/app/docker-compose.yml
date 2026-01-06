@@ -1,4 +1,3 @@
-version: "3.9"
 name: edge-app
 
 networks:
@@ -23,13 +22,18 @@ services:
       INFLUX_TOKEN_FILE: ${INFLUX_TOKEN_FILE:-/secrets/influx.token}
       # Storage paths inside container
       SITE_CONFIG_PATH: ${SITE_CONFIG_PATH:-/app/storage/site-config.yml}
-      PROFILES_DIR: ${PROFILES_DIR:-/app/profiles}
+      PROFILES_DIR: ${PROFILES_DIR:-/app/app/profiles}
       STORAGE_DIR: ${STORAGE_DIR:-/app/storage}
       # ChirpStack endpoints by service name
       CS_GRPC_SERVER: ${CS_GRPC_SERVER:-chirpstack:8080}
+      CS_GRPC_TOKEN_FILE: ${CS_GRPC_TOKEN_FILE:-/secrets/chirpstack.api_key}
       MQTT_HOST: ${MQTT_HOST:-chirpstack-mqtt:1883}
+    cap_add:
+      - NET_RAW
     volumes:
-      - ../../site-pack/.secrets:/secrets:ro
+      # Mount only the token file so `.secrets` can remain private (e.g., 0700).
+      - ../../site-pack/.secrets/influx.token:/secrets/influx.token:ro
+      - ../../site-pack/.secrets/chirpstack.api_key:/secrets/chirpstack.api_key:ro
       - ../../site-pack/storage:/app/storage:rw
     ports:
       - "8000:8000"

@@ -8,9 +8,8 @@ What the scripts do
 - `scripts/lora-pkt-fwd.service` — systemd unit for the Semtech packet forwarder.
 - `scripts/init-chirpstack-config.sh` — generates `configuration/chirpstack/chirpstack.toml` from a template with a fresh API secret (no overwrite if already present).
 - `scripts/cs-seed.py` — seeds ChirpStack (gateway/app/device profile/devices) from `site-pack/storage/chirpstack-devices.yml` using the API key and gateway EUI.
-- `scripts/package-site-agent.sh` — builds a tarball of the site-agent repo (no git) for scp-style deploys.
 - `scripts/pull-storage.sh` — rsync helper to copy `site-agent/storage` into `site-pack/storage`.
-- `scripts/gen-site-pack.sh` — (new) generate a site-pack skeleton with random secrets and templated env files.
+- `scripts/gen-site-pack.sh` — generate a site-pack skeleton with random secrets and templated env files, then build/export the site-agent image to `../images/site-agent.tar` (override with `IMAGE_OUT`).
 
 Inputs needed per site (stash off-box in your seeds vault)
 ---------------------------------------------------------
@@ -56,15 +55,15 @@ You must still supply/edit:
 End-to-end order of operations (per IPC)
 ----------------------------------------
 1) On laptop (seeds vault):
-   - Run `scripts/gen-site-pack.sh <site-id> <output-dir>` to create a site-pack skeleton with random secrets.
+   - Run `scripts/gen-site-pack.sh <site-id> <output-dir>` to create a site-pack skeleton with random secrets and build the site-agent image tar.
    - Fill `site-pack/lorawan.env` (CS admin/tenant), `chirpstack-devices.yml` (DevEUIs, app_key if you don’t want the generated default), `site-config.yml`, profiles, registries/miners if restoring.
-   - Build/push site-agent image if needed: `docker build -t ghcr.io/<owner>/site-agent:latest .` then push.
 2) On IPC (Ubuntu):
    - Install Docker; install Tailscale and `tailscale up ...` (manual for now).
    - Build `sx1302_hal`, install udev rule for `/dev/ht1303-0`, install `lora-pkt-fwd.service` if desired.
 3) Copy bits to IPC:
    - `rsync edge-stack/ -> /opt/edge-stack/`
    - `rsync <site-pack>/ -> /opt/edge-stack/site-pack/`
+   - `rsync images/ -> /opt/edge-stack/images/`
 4) Run bootstrap:
    - `/opt/edge-stack/scripts/bootstrap-lite.sh`
    - It will: install masscan; stamp gateway EUI (if setup script installed); stage `lorawan.env`; clone chirpstack-docker if missing; generate chirpstack.toml; bring up data/lorawan/app; seed ChirpStack (gateway/app/devices) if API key + devices file are present.
@@ -86,7 +85,7 @@ Script/catalog reference
   - Optional `CHIRPSTACK_DEFAULT_APP_KEY` to use for devices missing an explicit app_key.
 - Influx/Grafana:
   - Admin creds from `site-pack/.secrets/influx.admin.*` and `.env.grafana`.
-  - Site-agent token minted to `site-pack/.secrets/influx.token`.
+  - Site-agent token minted to `site-pack/.secrets/influx.token` (ensure the file exists; empty placeholder is fine).
 - Site-agent:
   - Env from `site-pack/.env`; storage bind-mount `/app/storage` from `site-pack/storage`.
-  - GHCR image tag configured in `edge-stacks/app/docker-compose.yml` (no per-site change needed).
+  - Bootstrap will load `images/site-agent.tar` if the image is not already present; GHCR tag is still configured in `edge-stacks/app/docker-compose.yml` (no per-site change needed).

@@ -6,12 +6,13 @@ from a YAML file (default: site-pack/storage/chirpstack-devices.yml).
 Requires:
 - CHIRPSTACK_API_KEY or CHIRPSTACK_API_KEY_FILE (default: site-pack/.secrets/chirpstack.api_key)
 - Optional CHIRPSTACK_TENANT_ID (otherwise first tenant is used)
-- Optional CHIRPSTACK_API_URL (default: http://localhost:8080)
+- Optional CHIRPSTACK_API_URL (default: http://localhost:8090)
 """
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -42,6 +43,62 @@ def lower_hex(s: str) -> str:
     return "".join(ch for ch in s if ch.isalnum()).lower()
 
 
+def _region_config_id(dp: dict) -> str:
+    return (
+        dp.get("region_config_id")
+        or dp.get("regionConfigId")
+        or dp.get("region_id")
+        or dp.get("regionId")
+        or ""
+    )
+
+
+def _normalize_region(region: str, region_config_id: str) -> str:
+    # ChirpStack expects the Region enum name (e.g. US915, EU868, AS923_2, ...).
+    r = (region or "").strip()
+    if r:
+        return r.upper().replace("-", "_")
+
+    rc = (region_config_id or "").strip().lower()
+    if not rc:
+        return ""
+
+    m = re.match(r"^(as923)_(\d+)\b", rc)
+    if m:
+        return f"{m.group(1).upper()}_{m.group(2)}"
+
+    return rc.split("_", 1)[0].upper()
+
+
+def _normalize_mac_version(v: str) -> str:
+    # Accept either enum form (LORAWAN_1_0_4) or dotted form (1.0.4).
+    s = (v or "").strip()
+    if not s:
+        return ""
+    u = s.upper().replace("-", "_")
+    if u.startswith("LORAWAN_"):
+        return u
+    m = re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", s)
+    if m:
+        patch = m.group(3) or "0"
+        return f"LORAWAN_{m.group(1)}_{m.group(2)}_{patch}"
+    return u
+
+
+def _normalize_reg_params_revision(v: str) -> str:
+    # Accept either enum-ish form (RP002_1_0_3) or dotted form (RP002-1.0.3).
+    s = (v or "").strip()
+    if not s:
+        return ""
+    return s.upper().replace("-", "_").replace(".", "_")
+
+
+def _normalize_adr_algorithm_id(v: str) -> str:
+    # ChirpStack v4 uses an algorithm id string; "default" is typical.
+    s = (v or "").strip()
+    return s or "default"
+
+
 class CSClient:
     def __init__(self, base_url: str, token: str):
         self.base_url = base_url.rstrip("/")
@@ -63,6 +120,14 @@ class CSClient:
     def _post(self, path: str, json: dict, wrapper: Optional[str] = None) -> dict:
         body = {wrapper: json} if wrapper else json
         r = self.h.post(path, json=body)
+        r.raise_for_status()
+        if r.content:
+            return r.json()
+        return {}
+
+    def _put(self, path: str, json: dict, wrapper: Optional[str] = None) -> dict:
+        body = {wrapper: json} if wrapper else json
+        r = self.h.put(path, json=body)
         r.raise_for_status()
         if r.content:
             return r.json()
@@ -97,20 +162,62 @@ class CSClient:
         name = dp.get("name")
         if not name:
             raise SystemExit("Device profile name missing in devices file")
+
+        desired_region_config_id = _region_config_id(dp)
+        desired_region = _normalize_region(dp.get("region") or "", desired_region_config_id)
+        desired_mac = _normalize_mac_version(dp.get("mac_version") or dp.get("macVersion") or "")
+        desired_rp = _normalize_reg_params_revision(dp.get("reg_params_revision") or dp.get("regParamsRevision") or "")
+        desired_adr = _normalize_adr_algorithm_id(dp.get("adr_algorithm_id") or dp.get("adrAlgorithmId") or "")
+
         data = self._get("/api/device-profiles", params={"tenantId": tenant_id, "limit": 1000})
         for item in data.get("result") or data.get("deviceProfiles") or []:
             if item.get("name") == name:
-                return item["id"]
+                dp_id = item["id"]
+                existing_region = item.get("region") or ""
+                existing_region_config_id = item.get("regionConfigId") or item.get("regionId") or ""
+                existing_mac = item.get("macVersion") or ""
+                existing_rp = item.get("regParamsRevision") or ""
+                existing_adr = item.get("adrAlgorithmId") or ""
+
+                needs_update = any(
+                    [
+                        bool(desired_region) and existing_region != desired_region,
+                        bool(desired_region_config_id) and existing_region_config_id != desired_region_config_id,
+                        bool(desired_mac) and existing_mac != desired_mac,
+                        bool(desired_rp) and existing_rp != desired_rp,
+                        bool(desired_adr) and existing_adr != desired_adr,
+                    ]
+                )
+                if needs_update:
+                    payload = {
+                        "id": dp_id,
+                        "tenantId": tenant_id,
+                        "name": name,
+                        "description": dp.get("description", item.get("description", "")),
+                        "region": desired_region or existing_region,
+                        "regionConfigId": desired_region_config_id or existing_region_config_id,
+                        "macVersion": desired_mac or existing_mac,
+                        "regParamsRevision": desired_rp or existing_rp,
+                        "adrAlgorithmId": desired_adr or existing_adr,
+                        "supportsClassB": bool(dp.get("supports_class_b", item.get("supportsClassB", False))),
+                        "supportsClassC": bool(dp.get("supports_class_c", item.get("supportsClassC", False))),
+                        "supportsOtaa": bool(dp.get("supports_otaa", item.get("supportsOtaa", True))),
+                    }
+                    self._put(f"/api/device-profiles/{dp_id}", payload, wrapper="deviceProfile")
+                return dp_id
         payload = {
             "name": name,
             "tenantId": tenant_id,
-            "regionId": dp.get("region_id") or dp.get("regionId"),
-            "macVersion": dp.get("mac_version") or dp.get("macVersion") or "1.0.0",
-            "regParamsRevision": dp.get("reg_params_revision") or dp.get("regParamsRevision") or "RP002-1.0.3",
+            "region": desired_region,
+            "regionConfigId": desired_region_config_id,
+            "macVersion": desired_mac,
+            "regParamsRevision": desired_rp,
+            "adrAlgorithmId": desired_adr,
             "supportsClassB": bool(dp.get("supports_class_b", False)),
             "supportsClassC": bool(dp.get("supports_class_c", False)),
-            "supportsOtaa": True,
+            "supportsOtaa": bool(dp.get("supports_otaa", True)),
         }
+        payload = {k: v for k, v in payload.items() if v is not None}
         res = self._post("/api/device-profiles", payload, wrapper="deviceProfile")
         return res.get("id") or res.get("deviceProfileId") or ""
 
@@ -163,8 +270,8 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_yaml(Path(args.devices_file))
+    base_url = os.getenv("CHIRPSTACK_API_URL", "http://localhost:8090")
     token = read_token()
-    base_url = os.getenv("CHIRPSTACK_API_URL", "http://localhost:8080")
     tenant_id_env = os.getenv("CHIRPSTACK_TENANT_ID")
     default_app_key = os.getenv("CHIRPSTACK_DEFAULT_APP_KEY") or os.getenv("DEFAULT_APP_KEY")
 

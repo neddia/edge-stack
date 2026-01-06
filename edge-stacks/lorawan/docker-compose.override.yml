@@ -1,0 +1,21 @@
+networks:
+  core:
+    external: true
+    name: edge_core
+
+services:
+  mosquitto:
+    networks:
+      default: {}
+      core:
+        aliases:
+          - chirpstack-mqtt
+          - mosquitto
+
+  chirpstack:
+    networks:
+      default: {}
+      core:
+        aliases:
+          - chirpstack
+

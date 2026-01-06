@@ -11,14 +11,29 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-# Prefer a defaults/.env.smtp next to this repo; fall back to setpoint-seeds/defaults if present.
-PRIMARY_SMTP="${DEFAULTS_SMTP:-$ROOT/defaults/.env.smtp}"
-ALT_SMTP="$ROOT/../setpoint-seeds/defaults/.env.smtp"
+SEEDS_ROOT="$ROOT/.."
+if [ -d "$SEEDS_ROOT/sites" ] && [ -d "$SEEDS_ROOT/defaults" ]; then
+  : # setpoint-seeds layout
+elif [ -d "$ROOT/../setpoint-seeds/sites" ]; then
+  SEEDS_ROOT="$ROOT/../setpoint-seeds"
+fi
+DEFAULTS_DIR="${DEFAULTS_DIR:-$SEEDS_ROOT/defaults}"
+# Prefer a defaults/.env.smtp next to the seeds vault; allow override.
+PRIMARY_SMTP="${DEFAULTS_SMTP:-$DEFAULTS_DIR/.env.smtp}"
+ALT_SMTP="$ROOT/defaults/.env.smtp"
 
 SITE_ID="$1"
-DEST="$(realpath "$2")"
+DEST_RAW="$2"
+mkdir -p "$DEST_RAW"
+DEST="$(realpath "$DEST_RAW")"
 
-mkdir -p "$DEST"/.secrets "$DEST"/storage
+install -d -m 700 "$DEST/.secrets"
+install -d -m 755 "$DEST/storage"
+
+DEFAULT_SITE_CONFIG="${DEFAULT_SITE_CONFIG:-$DEFAULTS_DIR/site-config.dev.yml}"
+if [ -f "$DEFAULT_SITE_CONFIG" ] && [ ! -f "$DEST/storage/site-config.yml" ]; then
+  cp "$DEFAULT_SITE_CONFIG" "$DEST/storage/site-config.yml"
+fi
 
 rand_hex() { openssl rand -hex "$1"; }
 rand_b32() { openssl rand -base64 "$1" | tr -d '\n'; }
@@ -67,6 +82,10 @@ EOF
 cat > "$DEST/.secrets/influx.admin.token" <<EOF
 $INFLUX_TOKEN
 EOF
+
+# Placeholder token file so Compose can bind-mount it before `influx-init` writes the real token.
+: > "$DEST/.secrets/influx.token"
+chmod 600 "$DEST/.secrets/influx.token" || true
 
 cat > "$DEST/.secrets/.env.grafana" <<EOF
 GF_SECURITY_ADMIN_USER=$GRAFANA_USER
@@ -129,7 +148,7 @@ cat > "$DEST/storage/README.generated" <<EOF
 Generated skeleton for site-pack ($SITE_ID).
 Fill in:
 - storage/site-config.yml
-- storage/profiles/
+- storage/profiles/ (optional; only if you want site-local overrides; set PROFILES_DIR=/app/storage/profiles in site-pack/.env)
 - storage/chirpstack-devices.yml (DevEUIs, names; app_key can stay default)
 - site-pack/lorawan.env (ChirpStack tenant id; admin defaults to $CS_ADMIN_EMAIL with generated password)
 - site-pack/.secrets/chirpstack.api_key (or let init overlay create it)
@@ -141,3 +160,32 @@ echo "Influx admin user/pass/token stored in .secrets"
 echo "Grafana admin user/pass stored in .secrets/.env.grafana"
 echo "Default app key: $DEFAULT_APP_KEY"
 echo "Reminder: set ChirpStack tenant ID, create/approve the generated admin, and fill DevEUIs in chirpstack-devices.yml"
+
+if [ "${SKIP_IMAGE_BUILD:-0}" != "1" ]; then
+  SITE_AGENT_IMAGE="${SITE_AGENT_IMAGE:-ghcr.io/neddia/site-agent:latest}"
+  IMAGE_OUT_DIR="${IMAGE_OUT_DIR:-$SEEDS_ROOT/images}"
+  IMAGE_OUT="${IMAGE_OUT:-$IMAGE_OUT_DIR/site-agent.tar}"
+
+  if [ -n "${SITE_AGENT_SRC:-}" ]; then
+    SA_SRC="$SITE_AGENT_SRC"
+  elif [ -d "$SEEDS_ROOT/../site-agent" ]; then
+    SA_SRC="$SEEDS_ROOT/../site-agent"
+  elif [ -d "$ROOT/../site-agent" ]; then
+    SA_SRC="$ROOT/../site-agent"
+  else
+    echo "error: site-agent source not found; set SITE_AGENT_SRC" >&2
+    exit 1
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "error: docker not found; install Docker to build site-agent image" >&2
+    exit 1
+  fi
+
+  echo "Building site-agent image from $SA_SRC -> $SITE_AGENT_IMAGE"
+  docker build -t "$SITE_AGENT_IMAGE" "$SA_SRC"
+
+  echo "Saving site-agent image to $IMAGE_OUT"
+  mkdir -p "$IMAGE_OUT_DIR"
+  docker save -o "$IMAGE_OUT" "$SITE_AGENT_IMAGE"
+fi

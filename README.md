@@ -7,7 +7,7 @@ Layout
 ------
 - `edge-stacks/data/docker-compose.yml` – InfluxDB with first-boot init + token minting (token lands in `site-pack/.secrets/influx.token`) and Grafana with Influx datasource provisioning.
 - `edge-stacks/lorawan/` – place the upstream `chirpstack-docker` repo here; optional `docker-compose.init.yml` auto-creates an app + API key and drops them in `site-pack/.secrets`.
-- `edge-stacks/app/docker-compose.yml` – site-agent container wired to `site-pack/.env`, `site-pack/.secrets`, and `site-pack/storage`.
+- `edge-stacks/app/docker-compose.yml` – site-agent container wired to `site-pack/.env`, `site-pack/.secrets/influx.token`, and `site-pack/storage`.
 - `site-pack/` – per-site bundle (not for git). `.env` + `.secrets/` + `storage/` live here; see `site-pack/README.md`.
 - `scripts/` – helper scripts for bootstrap and packaging.
 - `scripts/setup-lora-gateway.sh` – stamps the concentrator EUI into `global_conf.json` (expects sx1302_hal built and `/dev/ht1303-0` symlink).
@@ -41,7 +41,7 @@ Quick start (local dev / staging an IPC)
 
 4) site-agent image:
    - `edge-stacks/app` defaults to `SITE_AGENT_IMAGE=ghcr.io/your-org/site-agent:latest`.
-   - Use `scripts/package-site-agent.sh` if you want a tarball to scp instead of giving the IPC git access.
+   - `scripts/gen-site-pack.sh` builds and exports `../images/site-agent.tar`; `bootstrap-lite.sh` will load `images/site-agent.tar` if the image is not already present.
 
 Backups / restore
 -----------------
