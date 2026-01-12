@@ -23,12 +23,6 @@ if [ ! -f "$SITEPACK/.env" ]; then
   echo "warning: $SITEPACK/.env not found; compose will fall back to defaults or fail for missing vars" >&2
 fi
 
-# Ensure bind-mount targets exist (Compose file mounts require the source file to exist).
-mkdir -p "$SECRETS_DIR"
-if [ ! -e "$SECRETS_DIR/influx.token" ]; then
-  ( umask 077; : > "$SECRETS_DIR/influx.token" ) || true
-fi
-
 echo "Ensuring shared network..."
 docker network inspect edge_core >/dev/null 2>&1 || docker network create edge_core
 
@@ -39,6 +33,39 @@ fi
 if command -v masscan >/dev/null 2>&1; then
   if ! sudo setcap cap_net_raw,cap_net_admin=eip /usr/bin/masscan 2>/dev/null; then
     echo "warning: failed to set capabilities on /usr/bin/masscan; you may need to run as root" >&2
+  fi
+fi
+
+SCAN_USER="${SCAN_USER:-$(id -un)}"
+SCAN_SCRIPT_SRC="$ROOT/scripts/setpoint-scan-miners"
+SCAN_SERVICE_SRC="$ROOT/scripts/setpoint-scan-miners.service"
+SCAN_TIMER_SRC="$ROOT/scripts/setpoint-scan-miners.timer"
+
+if command -v systemctl >/dev/null 2>&1; then
+  if [ -f "$SCAN_SCRIPT_SRC" ] && [ -f "$SCAN_SERVICE_SRC" ] && [ -f "$SCAN_TIMER_SRC" ]; then
+    echo "Installing setpoint miner scan service..."
+    if ! python3 - <<'PY' >/dev/null 2>&1
+import yaml  # noqa: F401
+PY
+    then
+      if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update && sudo apt-get install -y python3-yaml
+      else
+        echo "warning: python3-yaml missing and apt-get unavailable; scan service may fail" >&2
+      fi
+    fi
+
+    sudo install -m 0755 "$SCAN_SCRIPT_SRC" /usr/local/bin/setpoint-scan-miners
+    tmp_unit="$(mktemp)"
+    sed -e "s|__SCAN_USER__|$SCAN_USER|g" -e "s|__SITEPACK__|$SITEPACK|g" \
+      "$SCAN_SERVICE_SRC" > "$tmp_unit"
+    sudo install -m 0644 "$tmp_unit" /etc/systemd/system/setpoint-scan-miners.service
+    rm -f "$tmp_unit"
+    sudo install -m 0644 "$SCAN_TIMER_SRC" /etc/systemd/system/setpoint-scan-miners.timer
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now setpoint-scan-miners.timer
+  else
+    echo "Skipping miner scan service install (script or unit files missing)"
   fi
 fi
 
@@ -108,10 +135,6 @@ if [ -f "$LORAWAN_DIR/docker-compose.yml" ]; then
     "$ROOT/scripts/init-chirpstack-config.sh" || echo "warning: chirpstack config init failed" >&2
   fi
   ( cd "$LORAWAN_DIR" && docker compose up -d )
-  if [ "${RUN_CS_INIT:-0}" = "1" ] && [ -f "$LORAWAN_DIR/docker-compose.init.yml" ]; then
-    echo "Starting ChirpStack init overlay..."
-    ( cd "$LORAWAN_DIR" && docker compose -f docker-compose.yml -f docker-compose.init.yml up -d cs-init )
-  fi
   if [ -x "$ROOT/scripts/cs-seed.py" ] && [ -f "$SITEPACK/storage/chirpstack-devices.yml" ]; then
     echo "Seeding ChirpStack (gateway/app/devices)..."
     if ! python3 -c 'import httpx' >/dev/null 2>&1; then

@@ -3,12 +3,11 @@ Setup Overview
 
 What the scripts do
 -------------------
-- `scripts/bootstrap-lite.sh` — installs host masscan + setcap, optionally stamps gateway EUI (if `setup-lora-gateway.sh` exists), stages `lorawan.env` into `edge-stacks/lorawan/.env`, auto-clones `chirpstack-docker` if missing, initializes ChirpStack config, brings up data/lorawan/app stacks, and runs `cs-seed.py` if the API key + devices file are present.
+- `scripts/bootstrap-lite.sh` — installs host masscan + setcap, installs the `setpoint-scan-miners` systemd timer, optionally stamps gateway EUI (if `setup-lora-gateway.sh` exists), stages `lorawan.env` into `edge-stacks/lorawan/.env`, auto-clones `chirpstack-docker` if missing, initializes ChirpStack config, brings up data/lorawan/app stacks, and runs `cs-seed.py` if the API key + devices file are present.
 - `scripts/setup-lora-gateway.sh` — reads `global_conf.template.json`, detects concentrator EUI via `chip_id`, writes `global_conf.json`, restarts `lora-pkt-fwd.service`, and saves the EUI to `site-pack/.secrets/gateway_eui`.
 - `scripts/lora-pkt-fwd.service` — systemd unit for the Semtech packet forwarder.
 - `scripts/init-chirpstack-config.sh` — generates `configuration/chirpstack/chirpstack.toml` from a template with a fresh API secret (no overwrite if already present).
 - `scripts/cs-seed.py` — seeds ChirpStack (gateway/app/device profile/devices) from `site-pack/storage/chirpstack-devices.yml` using the API key and gateway EUI.
-- `scripts/pull-storage.sh` — rsync helper to copy `site-agent/storage` into `site-pack/storage`.
 - `scripts/gen-site-pack.sh` — generate a site-pack skeleton with random secrets and templated env files, then build/export the site-agent image to `../images/site-agent.tar` (override with `IMAGE_OUT`).
 
 Inputs needed per site (stash off-box in your seeds vault)
@@ -28,7 +27,7 @@ These live under `site-pack/` on the IPC but should originate from your off-box 
   - `site-config.yml` — your topology (manual).
   - `profiles/` — optional site-local profiles; global profiles live in `/app/profiles` in the image.
   - `chirpstack-devices.yml` — devices to seed; generator writes a template; fill DevEUIs/app keys or rely on `CHIRPSTACK_DEFAULT_APP_KEY`.
-  - `registry_*.json`, `miners.db` — copied back from a live box after commissioning (manual).
+  - `registry_*.json`, `miners.sqlite` — copied back from a live box after commissioning (manual).
 - OS creds: `edgeadm` password — generator will print a random suggestion; you must set it on the box manually.
 - Tailscale: `TS_AUTHKEY` — manual (not wired yet).
 - ChirpStack admin: `CHIRPSTACK_ADMIN_EMAIL`, `CHIRPSTACK_ADMIN_PASSWORD`, `CHIRPSTACK_TENANT_ID` — manual (put into `lorawan.env`).
@@ -48,7 +47,7 @@ Generator (`gen-site-pack.sh`) creates:
 You must still supply/edit:
 - DevEUIs and desired names in `chirpstack-devices.yml` (or pull from site-config and set a default app key).
 - ChirpStack admin email/password/tenant ID in `lorawan.env`.
-- site-config.yml, profiles (only if site-local), registries, miners.db.
+- site-config.yml, profiles (only if site-local), registries, miners.sqlite.
 - Tailscale auth key, OS password, GHCR PAT (if used), SMTP creds.
 - ChirpStack API key: either let the init overlay create it (needs admin creds in lorawan.env) or paste one into `.secrets/chirpstack.api_key`.
 
@@ -56,7 +55,7 @@ End-to-end order of operations (per IPC)
 ----------------------------------------
 1) On laptop (seeds vault):
    - Run `scripts/gen-site-pack.sh <site-id> <output-dir>` to create a site-pack skeleton with random secrets and build the site-agent image tar.
-   - Fill `site-pack/lorawan.env` (CS admin/tenant), `chirpstack-devices.yml` (DevEUIs, app_key if you don’t want the generated default), `site-config.yml`, profiles, registries/miners if restoring.
+   - Fill `site-pack/lorawan.env` (CS tenant id), `chirpstack-devices.yml` (DevEUIs, app_key if you don’t want the generated default), `site-config.yml`, profiles, registries/miners if restoring.
 2) On IPC (Ubuntu):
    - Install Docker; install Tailscale and `tailscale up ...` (manual for now).
    - Build `sx1302_hal`, install udev rule for `/dev/ht1303-0`, install `lora-pkt-fwd.service` if desired.
@@ -68,15 +67,15 @@ End-to-end order of operations (per IPC)
    - `/opt/edge-stack/scripts/bootstrap-lite.sh`
    - It will: install masscan; stamp gateway EUI (if setup script installed); stage `lorawan.env`; clone chirpstack-docker if missing; generate chirpstack.toml; bring up data/lorawan/app; seed ChirpStack (gateway/app/devices) if API key + devices file are present.
 5) After commissioning:
-   - Copy back `site-pack/storage/registry_*.json` and `miners.db` to your seeds vault.
+   - Copy back `site-pack/storage/registry_*.json` and `miners.sqlite` to your seeds vault.
    - Keep `gateway_eui` and `chirpstack.api_key` in `.secrets` for future swaps.
 
 Script/catalog reference
 ------------------------
 - ChirpStack init overlay vars (in `edge-stacks/lorawan/.env`):
   - `CHIRPSTACK_URL` (default http://chirpstack:8080)
-  - `CHIRPSTACK_ADMIN_EMAIL` (manual)
-  - `CHIRPSTACK_ADMIN_PASSWORD` (manual)
+  - `CHIRPSTACK_ADMIN_EMAIL` (manual; only used if you still run the init overlay)
+  - `CHIRPSTACK_ADMIN_PASSWORD` (manual; only used if you still run the init overlay)
   - `CHIRPSTACK_TENANT_ID` (manual)
   - `CHIRPSTACK_APP_NAME` (defaults to site app)
 - ChirpStack seeder (`cs-seed.py`):
@@ -85,7 +84,7 @@ Script/catalog reference
   - Optional `CHIRPSTACK_DEFAULT_APP_KEY` to use for devices missing an explicit app_key.
 - Influx/Grafana:
   - Admin creds from `site-pack/.secrets/influx.admin.*` and `.env.grafana`.
-  - Site-agent token minted to `site-pack/.secrets/influx.token` (ensure the file exists; empty placeholder is fine).
+  - Site-agent token minted to `site-pack/.secrets/influx.token`.
 - Site-agent:
   - Env from `site-pack/.env`; storage bind-mount `/app/storage` from `site-pack/storage`.
   - Bootstrap will load `images/site-agent.tar` if the image is not already present; GHCR tag is still configured in `edge-stacks/app/docker-compose.yml` (no per-site change needed).

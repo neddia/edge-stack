@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+try:
+    import yaml
+except Exception:  # pragma: no cover - host dependency check
+    print("error: python3-yaml is required (apt-get install python3-yaml)", file=sys.stderr)
+    sys.exit(1)
+
+MASSCAN_LINE = re.compile(r"^open\\s+tcp\\s+(\\d+)\\s+([0-9.]+)\\b")
+
+SCHEMA = """
+PRAGMA journal_mode=WAL;
+CREATE TABLE IF NOT EXISTS miners (
+  ip TEXT PRIMARY KEY,
+  port INTEGER NOT NULL,
+  model TEXT,
+  type_id TEXT,
+  group_id TEXT,
+  vfd_ids TEXT,
+  open INTEGER NOT NULL DEFAULT 1,
+  last_seen INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_miners_group ON miners(group_id);
+CREATE INDEX IF NOT EXISTS ix_miners_open  ON miners(open);
+"""
+
+
+def _load_yaml(path: Path) -> dict:
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except FileNotFoundError:
+        print(f"error: site-config not found: {path}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"error: failed to parse {path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _ip_in_any(ip: str, cidrs: list[str]) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except Exception:
+        return False
+    for c in cidrs:
+        try:
+            if addr in ipaddress.ip_network(c, strict=False):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _dedupe(seq: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in seq:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def _fill_group_vfds(cfg: dict) -> None:
+    vfds = cfg.get("vfds") or []
+    by_group: dict[str, list[str]] = {}
+    for v in vfds:
+        if not isinstance(v, dict):
+            continue
+        cg = v.get("control_group")
+        vid = v.get("vfd_id")
+        if not cg or not vid:
+            continue
+        by_group.setdefault(str(cg), []).append(str(vid))
+
+    miners = cfg.get("miners") or {}
+    groups = miners.get("groups") or []
+    for g in groups:
+        if not isinstance(g, dict):
+            continue
+        if g.get("vfd_ids"):
+            continue
+        cg = g.get("control_group")
+        if not cg:
+            continue
+        g["vfd_ids"] = _dedupe([str(v) for v in by_group.get(str(cg), []) if str(v).strip()])
+
+
+def _group_for_ip(ip: str, groups: list[dict]) -> tuple[str | None, list[str]]:
+    for g in groups:
+        if not isinstance(g, dict):
+            continue
+        ranges = g.get("ip_ranges") or []
+        if ranges and _ip_in_any(ip, [str(x) for x in ranges]):
+            return str(g.get("id") or "") or None, list(g.get("vfd_ids") or [])
+    if groups:
+        g = groups[0]
+        if isinstance(g, dict):
+            return str(g.get("id") or "") or None, list(g.get("vfd_ids") or [])
+    return None, []
+
+
+def _resolve_sqlite_path(sqlite_path: str | None, sitepack: Path) -> Path:
+    candidate = sqlite_path or "storage/miners.sqlite"
+    p = Path(candidate)
+    if p.is_absolute():
+        if str(p).startswith("/app/storage/"):
+            rel = str(p)[len("/app/storage/"):]
+            return sitepack / "storage" / rel
+        return p
+    # Mirror container default: "storage/..." lives under site-pack.
+    return sitepack / candidate
+
+
+def _db_conn(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path), timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
+    conn.execute("PRAGMA foreign_keys=ON;")
+    conn.executescript(SCHEMA)
+    return conn
+
+
+def _upsert_open_ip(conn: sqlite3.Connection, ip: str, port: int, group_id: str | None, vfd_ids: list[str]) -> None:
+    now = int(time.time())
+    vfd_ids_norm = sorted(set(map(str, (vfd_ids or []))))
+    vfd_json = json.dumps(vfd_ids_norm, separators=(",", ":"))
+    sql = """
+        INSERT INTO miners(ip, port, group_id, vfd_ids, open, last_seen)
+        VALUES(?,?,?,?,1,?)
+        ON CONFLICT(ip) DO UPDATE SET
+          port=excluded.port,
+          group_id=COALESCE(excluded.group_id, miners.group_id),
+          vfd_ids=CASE
+                     WHEN miners.vfd_ids != excluded.vfd_ids THEN excluded.vfd_ids
+                     ELSE miners.vfd_ids
+                  END,
+          open=1,
+          last_seen=?
+    """
+    conn.execute(sql, (ip, port, group_id, vfd_json, now, now))
+
+
+def _bulk_reconcile_open(conn: sqlite3.Connection, port: int, alive_ips: list[str]) -> None:
+    alive = {str(ip) for ip in alive_ips}
+    if not alive:
+        return
+    qmarks = ",".join("?" for _ in alive)
+    params = [port, *sorted(alive)]
+    conn.execute(f"UPDATE miners SET open=0 WHERE port=? AND ip NOT IN ({qmarks})", params)
+
+
+def _close_stale(conn: sqlite3.Connection, *, cutoff_ts: int, port: int) -> int:
+    cur = conn.execute(
+        "UPDATE miners SET open=0 WHERE open=1 AND port=? AND last_seen IS NOT NULL AND last_seen < ?",
+        (port, cutoff_ts),
+    )
+    return int(cur.rowcount or 0)
+
+
+def _count_open(conn: sqlite3.Connection, *, port: int) -> int:
+    cur = conn.execute("SELECT COUNT(1) FROM miners WHERE open=1 AND port=?", (port,))
+    row = cur.fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Scan miner IPs with masscan and update miners.sqlite.")
+    parser.add_argument("--sitepack", default=os.environ.get("SITEPACK", "/opt/edge-stack/site-pack"))
+    parser.add_argument("--config", default=os.environ.get("SITE_CONFIG_PATH", ""))
+    parser.add_argument("--masscan-bin", default=os.environ.get("MASSCAN_BIN", "masscan"))
+    args = parser.parse_args()
+
+    sitepack = Path(args.sitepack)
+    config_path = Path(args.config) if args.config else sitepack / "storage" / "site-config.yml"
+
+    cfg = _load_yaml(config_path)
+    _fill_group_vfds(cfg)
+
+    miners = cfg.get("miners") or {}
+    groups = miners.get("groups") or []
+
+    cidrs: set[str] = set()
+    for g in groups:
+        if not isinstance(g, dict):
+            continue
+        for c in (g.get("ip_ranges") or []):
+            if c:
+                cidrs.add(str(c))
+    if not cidrs:
+        cidrs.update(str(c) for c in (miners.get("ip_ranges") or []) if c)
+    if not cidrs:
+        return 0
+
+    port = int(miners.get("port", 4028))
+    rate = int(miners.get("masscan_rate", 20000))
+    wait_s = int(miners.get("masscan_wait_s", 1))
+    scan_every_s = int(miners.get("scan_every_s", 300))
+
+    sqlite_path = _resolve_sqlite_path(miners.get("sqlite_path"), sitepack)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".masscan") as tf:
+        outfile = tf.name
+
+    cmd = [
+        args.masscan_bin,
+        f"-p{port}",
+        "--rate",
+        str(rate),
+        "--wait",
+        str(max(0, wait_s)),
+        "--open",
+        *sorted(cidrs),
+        "-oL",
+        outfile,
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        err = (proc.stderr or b"").decode("utf-8", "ignore")[:400]
+        print(f"error: masscan failed ({proc.returncode}): {err}", file=sys.stderr)
+        return proc.returncode
+
+    ips: list[str] = []
+    try:
+        conn = _db_conn(sqlite_path)
+        with open(outfile, "r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                m = MASSCAN_LINE.match(line.strip())
+                if not m:
+                    continue
+                p, ip = int(m.group(1)), m.group(2)
+                if p != port:
+                    continue
+                ips.append(ip)
+                group_id, vfd_ids = _group_for_ip(ip, groups)
+                _upsert_open_ip(conn, ip, port, group_id, vfd_ids)
+        ttl_s = max(scan_every_s * 3, 600)
+        closed = _close_stale(conn, cutoff_ts=int(time.time()) - ttl_s, port=port)
+        if closed:
+            print(f"closed stale miners: {closed}", file=sys.stderr)
+        if ips:
+            open_count = _count_open(conn, port=port)
+            ratio = (len(ips) / open_count) if open_count else 0.0
+            if open_count > 0 and ratio >= 0.7:
+                _bulk_reconcile_open(conn, port, ips)
+            else:
+                print(
+                    f"skip reconcile: open={open_count} found={len(ips)} ratio={ratio:.3f}",
+                    file=sys.stderr,
+                )
+        conn.commit()
+    finally:
+        try:
+            Path(outfile).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    print(f"scan complete: {len(ips)} hosts open on {port}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

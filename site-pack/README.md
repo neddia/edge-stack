@@ -16,5 +16,5 @@ Workflow notes
 --------------
 - Seed/restore: copy the `storage/` contents (site-config + registries + profiles) from your source of truth into this folder, and keep `.env` alongside.
 - Backups: after tuning via UI, grab the updated `storage/control-registry.json` and `storage/provision-registry.json` from the running box and drop them here before committing to your site-seed repo.
-- If `miners.db` is absent on a fresh box, the agent can seed ranges from `site-config.yml`; still back up `miners.db` if you rely on UI edits.
+- If `miners.sqlite` is absent on a fresh box, the agent can seed ranges from `site-config.yml`; still back up `miners.sqlite` if you rely on UI edits.
 - Tokens: the data stack mints a bucket-scoped token and writes it to `site-pack/.secrets/influx.token` (mounted as `/secrets/influx.token`), so `INFLUX_TOKEN` does not need to be written into `.env` (use `INFLUX_TOKEN_FILE`).

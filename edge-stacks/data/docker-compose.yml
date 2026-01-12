@@ -68,46 +68,55 @@ services:
           apk add --no-cache curl jq >/dev/null
 
           TOK="/secrets/influx.token"
-          if [ -s "$TOK" ]; then
-            # normalize: strip CR/LF and rewrite with no newline
-            t="$(tr -d '\r\n' < "$TOK")"
-            printf '%s' "$t" > "$TOK"
-            chmod 644 "$TOK" 2>/dev/null || true
-            echo "site-agent token exists at $TOK"
+
+          fix_perms() {
+            chown 0:0 "$$TOK" 2>/dev/null || chown 472:0 "$$TOK" 2>/dev/null || chown 472:472 "$$TOK" 2>/dev/null || true
+            chmod 640 "$$TOK" 2>/dev/null || chmod 644 "$$TOK" 2>/dev/null || true
+          }
+
+          if [ -s "$$TOK" ]; then
+            SIZE=$$(wc -c < "$$TOK" || true)
+            echo "site-agent token exists at $$TOK ($$SIZE bytes)"
+            fix_perms
             exit 0
           fi
 
-          ADMIN="$(cat /run/secrets/influx_admin_token)"
+          ADMIN=$$(cat /run/secrets/influx_admin_token)
 
-          ORG_ID="$(curl -fsS -H "Authorization: Token $ADMIN" \
-            "$INFLUX_URL/api/v2/orgs?org=$INFLUX_ORG" | jq -r '.orgs[0].id')"
-          [ -n "$ORG_ID" ] && [ "$ORG_ID" != "null" ] || { echo "ERROR: could not resolve ORG_ID" >&2; exit 1; }
+          echo "looking up org='$$INFLUX_ORG' bucket='$$INFLUX_BUCKET' at $$INFLUX_URL"
 
-          BKT_ID="$(curl -fsS -H "Authorization: Token $ADMIN" \
-            "$INFLUX_URL/api/v2/buckets?name=$INFLUX_BUCKET&orgID=$ORG_ID" | jq -r '.buckets[0].id')"
-          [ -n "$BKT_ID" ] && [ "$BKT_ID" != "null" ] || { echo "ERROR: could not resolve BKT_ID" >&2; exit 1; }
+          ORG_ID=$$(curl -fsS -H "Authorization: Token $$ADMIN" \
+            "$$INFLUX_URL/api/v2/orgs?org=$$INFLUX_ORG" | jq -r '.orgs[0].id')
+          [ -n "$$ORG_ID" ] && [ "$$ORG_ID" != "null" ] || { echo "ERROR: could not resolve ORG_ID" >&2; exit 1; }
+          echo "ORG_ID=$$ORG_ID"
 
-          AUTH="$(jq -n --arg org "$ORG_ID" --arg bkt "$BKT_ID" '{
-            orgID:$org,
+          BKT_ID=$$(curl -fsS -H "Authorization: Token $$ADMIN" \
+            "$$INFLUX_URL/api/v2/buckets?name=$$INFLUX_BUCKET&orgID=$$ORG_ID" | jq -r '.buckets[0].id')
+          [ -n "$$BKT_ID" ] && [ "$$BKT_ID" != "null" ] || { echo "ERROR: could not resolve BKT_ID" >&2; exit 1; }
+          echo "BKT_ID=$$BKT_ID"
+
+          AUTH=$$(jq -n --arg org "$$ORG_ID" --arg bkt "$$BKT_ID" '{
+            orgID:$$org,
             description:"site-agent token",
             permissions:[
-              {action:"read",  resource:{type:"buckets", id:$bkt}},
-              {action:"write", resource:{type:"buckets", id:$bkt}}
+              {action:"read",  resource:{type:"buckets", id:$$bkt}},
+              {action:"write", resource:{type:"buckets", id:$$bkt}}
             ]
-          }')"
+          }')
 
-          TOKEN="$(curl -fsS -X POST \
-            -H "Authorization: Token $ADMIN" \
+          TOKEN=$$(curl -fsS -X POST \
+            -H "Authorization: Token $$ADMIN" \
             -H "Content-Type: application/json" \
-            "$INFLUX_URL/api/v2/authorizations" \
-            -d "$AUTH" | jq -r '.token')"
+            "$$INFLUX_URL/api/v2/authorizations" \
+            -d "$$AUTH" | jq -r '.token')
 
-          LEN="$(printf '%s' "$TOKEN" | wc -c | tr -d " ")"
-          [ "$TOKEN" != "null" ] && [ "$LEN" -ge 20 ] || { echo "ERROR: invalid token (len=$LEN)" >&2; exit 1; }
+          LEN=$$(printf '%s' "$$TOKEN" | wc -c | tr -d ' ')
+          [ "$$TOKEN" != "null" ] && [ "$$LEN" -ge 20 ] || { echo "ERROR: got invalid token (len=$$LEN)" >&2; exit 1; }
 
-          printf '%s' "$TOKEN" > "$TOK"     # <- no trailing newline
-          chmod 644 "$TOK" 2>/dev/null || true
-          echo "created token at $TOK ($LEN chars)"
+          # write WITHOUT newline
+          printf '%s' "$$TOKEN" > "$$TOK"
+          fix_perms
+          echo "created token at $$TOK ($$LEN chars)"
 
   grafana:
     image: grafana/grafana:10.2.5
@@ -132,3 +141,28 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     ports:
       - "3000:3000"
+
+  telegraf:
+    image: telegraf:1.29
+    user: "0:0"
+    restart: unless-stopped
+    depends_on:
+      influx-init:
+        condition: service_completed_successfully
+    networks: [core]
+    environment:
+      INFLUX_ORG: ${INFLUX_ORG:-edge-org}
+      INFLUX_BUCKET: ${INFLUX_BUCKET:-edge-site}
+      HOST_PROC: /host/proc
+      HOST_SYS: /host/sys
+    volumes:
+      - ./telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/host:ro
+      - ../../site-pack/.secrets:/secrets:ro
+    command:
+      - sh
+      - -c
+      - |
+          export INFLUX_TOKEN="$(cat /secrets/influx.token)"
+          exec telegraf --config /etc/telegraf/telegraf.conf

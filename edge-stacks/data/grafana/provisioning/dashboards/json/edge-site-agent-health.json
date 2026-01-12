@@ -1,0 +1,89 @@
+{
+  "uid": "edge-site-agent-health",
+  "title": "Site-Agent Health",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "tags": ["edge", "site-agent", "health"],
+  "time": {"from": "now-6h", "to": "now"},
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "datasource", "uid": "grafana"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Miner Fleet Ratio (seen/expected)",
+      "datasource": {"type": "influxdb", "uid": "influxdb"},
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1}},
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "flux",
+          "datasource": {"type": "influxdb", "uid": "influxdb"},
+          "query": "from(bucket: \"edge-site\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"site_health\" and r.service == \"miners\")\n  |> filter(fn: (r) => r._field == \"seen_miners\" or r._field == \"expected_miners\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({ r with _value: if r.expected_miners == 0.0 then 0.0 else r.seen_miners / r.expected_miners }))\n  |> keep(columns: [\"_time\", \"_value\"])"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Miner Poll Errors",
+      "datasource": {"type": "influxdb", "uid": "influxdb"},
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}},
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "flux",
+          "datasource": {"type": "influxdb", "uid": "influxdb"},
+          "query": "from(bucket: \"edge-site\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"site_health\" and r.service == \"miners\")\n  |> filter(fn: (r) => r._field == \"timeout_errors\" or r._field == \"conn_errors\" or r._field == \"other_errors\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"_field\"])"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Pipeline Staleness (age_s)",
+      "datasource": {"type": "influxdb", "uid": "influxdb"},
+      "gridPos": {"x": 0, "y": 8, "w": 24, "h": 8},
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 0}},
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "flux",
+          "datasource": {"type": "influxdb", "uid": "influxdb"},
+          "query": "from(bucket: \"edge-site\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"pipeline_staleness\" and r._field == \"age_s\")\n  |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"measurement\"])"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Optimizer Plan Hz",
+      "datasource": {"type": "influxdb", "uid": "influxdb"},
+      "gridPos": {"x": 0, "y": 16, "w": 24, "h": 8},
+      "fieldConfig": {"defaults": {"unit": "hertz", "decimals": 1}},
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "flux",
+          "datasource": {"type": "influxdb", "uid": "influxdb"},
+          "query": "from(bucket: \"edge-site\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"optimizer_plan\" and r._field == \"hz\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"group\"])"
+        }
+      ]
+    }
+  ]
+}

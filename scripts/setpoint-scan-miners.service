@@ -1,0 +1,14 @@
+[Unit]
+Description=Setpoint miner discovery scan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__SCAN_USER__
+Group=__SCAN_USER__
+Environment=SITEPACK=__SITEPACK__
+EnvironmentFile=-/etc/default/setpoint-scan-miners
+ExecStart=/usr/local/bin/setpoint-scan-miners
+NoNewPrivileges=true
+PrivateTmp=true

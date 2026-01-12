@@ -27,8 +27,7 @@ DEST_RAW="$2"
 mkdir -p "$DEST_RAW"
 DEST="$(realpath "$DEST_RAW")"
 
-install -d -m 700 "$DEST/.secrets"
-install -d -m 755 "$DEST/storage"
+mkdir -p "$DEST"/.secrets "$DEST"/storage
 
 DEFAULT_SITE_CONFIG="${DEFAULT_SITE_CONFIG:-$DEFAULTS_DIR/site-config.dev.yml}"
 if [ -f "$DEFAULT_SITE_CONFIG" ] && [ ! -f "$DEST/storage/site-config.yml" ]; then
@@ -83,13 +82,10 @@ cat > "$DEST/.secrets/influx.admin.token" <<EOF
 $INFLUX_TOKEN
 EOF
 
-# Placeholder token file so Compose can bind-mount it before `influx-init` writes the real token.
-: > "$DEST/.secrets/influx.token"
-chmod 600 "$DEST/.secrets/influx.token" || true
-
 cat > "$DEST/.secrets/.env.grafana" <<EOF
 GF_SECURITY_ADMIN_USER=$GRAFANA_USER
 GF_SECURITY_ADMIN_PASSWORD=$GRAFANA_PASS
+ALERT_EMAIL=${ALERT_EMAIL:-alerts@example.com}
 # Optional:
 # GF_SERVER_ROOT_URL=
 # GF_INSTALL_PLUGINS=
@@ -152,7 +148,7 @@ Fill in:
 - storage/chirpstack-devices.yml (DevEUIs, names; app_key can stay default)
 - site-pack/lorawan.env (ChirpStack tenant id; admin defaults to $CS_ADMIN_EMAIL with generated password)
 - site-pack/.secrets/chirpstack.api_key (or let init overlay create it)
-- Optional: storage/registry_*.json, miners.db if restoring
+- Optional: storage/registry_*.json, miners.sqlite if restoring
 EOF
 
 echo "Generated site-pack for $SITE_ID at $DEST"

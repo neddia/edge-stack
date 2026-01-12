@@ -1,0 +1,288 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: edge-health
+    folder: Edge Alerts
+    interval: 1m
+    rules:
+      - uid: host_cpu_high
+        title: Host CPU > 90%
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: influxdb
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              datasource:
+                type: influxdb
+                uid: influxdb
+              intervalMs: 1000
+              maxDataPoints: 43200
+              query: |
+                from(bucket: "edge-site")
+                  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+                  |> filter(fn: (r) => r._measurement == "cpu" and r._field == "usage_idle" and r.cpu == "cpu-total")
+                  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)
+                  |> map(fn: (r) => ({ r with _value: 100.0 - r._value }))
+                  |> keep(columns: ["_time", "_value"])
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+              params: []
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              type: threshold
+              params: [90]
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+        for: 10m
+        noDataState: NoData
+        executionErrorState: Error
+        annotations:
+          summary: Host CPU usage over 90% for 10m.
+        labels:
+          severity: critical
+
+      - uid: host_mem_high
+        title: Host Memory > 90%
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: influxdb
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              datasource:
+                type: influxdb
+                uid: influxdb
+              intervalMs: 1000
+              maxDataPoints: 43200
+              query: |
+                from(bucket: "edge-site")
+                  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+                  |> filter(fn: (r) => r._measurement == "mem" and r._field == "used_percent")
+                  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)
+                  |> keep(columns: ["_time", "_value"])
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+              params: []
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              type: threshold
+              params: [90]
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+        for: 10m
+        noDataState: NoData
+        executionErrorState: Error
+        annotations:
+          summary: Host memory usage over 90% for 10m.
+        labels:
+          severity: critical
+
+      - uid: host_disk_high
+        title: Disk Used > 90% (/)
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: influxdb
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              datasource:
+                type: influxdb
+                uid: influxdb
+              intervalMs: 1000
+              maxDataPoints: 43200
+              query: |
+                from(bucket: "edge-site")
+                  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+                  |> filter(fn: (r) => r._measurement == "disk" and r._field == "used_percent" and r.path == "/")
+                  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)
+                  |> keep(columns: ["_time", "_value"])
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+              params: []
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              type: threshold
+              params: [90]
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+        for: 15m
+        noDataState: NoData
+        executionErrorState: Error
+        annotations:
+          summary: Root filesystem above 90% for 15m.
+        labels:
+          severity: critical
+
+      - uid: miner_fleet_shortfall
+        title: Miner Fleet Shortfall > 30%
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: influxdb
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              datasource:
+                type: influxdb
+                uid: influxdb
+              intervalMs: 1000
+              maxDataPoints: 43200
+              query: |
+                from(bucket: "edge-site")
+                  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+                  |> filter(fn: (r) => r._measurement == "site_health" and r.service == "miners")
+                  |> filter(fn: (r) => r._field == "seen_miners" or r._field == "expected_miners" or r._field == "scan_ok" or r._field == "scan_age_s")
+                  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)
+                  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+                  |> map(fn: (r) => ({ r with _value: if r.scan_ok == 1.0 and r.scan_age_s < 600.0 and r.expected_miners > 0.0 then 1.0 - (r.seen_miners / r.expected_miners) else 0.0 }))
+                  |> keep(columns: ["_time", "_value"])
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+              params: []
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              type: threshold
+              params: [0.3]
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+        for: 10m
+        noDataState: NoData
+        executionErrorState: Error
+        annotations:
+          summary: Miner fleet shortfall above 30% for 10m while scans are healthy.
+        labels:
+          severity: critical
+
+      - uid: pipeline_stale
+        title: Pipeline Staleness
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: influxdb
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              datasource:
+                type: influxdb
+                uid: influxdb
+              intervalMs: 1000
+              maxDataPoints: 43200
+              query: |
+                from(bucket: "edge-site")
+                  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+                  |> filter(fn: (r) => r._measurement == "pipeline_staleness" and (r._field == "age_s" or r._field == "max_age_s"))
+                  |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)
+                  |> pivot(rowKey: ["_time", "measurement"], columnKey: ["_field"], valueColumn: "_value")
+                  |> map(fn: (r) => ({ r with _value: if r.age_s > r.max_age_s then r.age_s - r.max_age_s else 0.0 }))
+                  |> keep(columns: ["_time", "_value", "measurement"])
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              reducer: last
+              type: reduce
+              params: []
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              type: threshold
+              params: [0.1]
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+        for: 5m
+        noDataState: NoData
+        executionErrorState: Error
+        annotations:
+          summary: One or more pipeline measurements are stale.
+        labels:
+          severity: critical

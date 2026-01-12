@@ -65,6 +65,7 @@ vfds:
       boot_hz: 87.0
 
 miners:
+  scan_enabled: false
   scan_every_s: 300
   poll_every_s: 60
   timeout_ms: 800
@@ -73,6 +74,17 @@ miners:
   ip_ranges: ["10.0.10.0/24"]
   groups:
     - { id: "row-a", control_group: fan-bank-a, ip_ranges: ["192.168.254.0/24"] }
+
+health:
+  enabled: true
+  staleness_every_s: 60
+  staleness_lookback_s: 3600
+  staleness_targets:
+    miner_fans: 120
+    miner_fan_rollup: 300
+    vfd_telemetry: 120
+    optimizer_plan: 300
+    lora_uplink: 300
 
 vfd_power_model:
   measurement: vfd_telemetry
