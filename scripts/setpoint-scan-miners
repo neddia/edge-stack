@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover - host dependency check
     print("error: python3-yaml is required (apt-get install python3-yaml)", file=sys.stderr)
     sys.exit(1)
 
-MASSCAN_LINE = re.compile(r"^open\\s+tcp\\s+(\\d+)\\s+([0-9.]+)\\b")
+MASSCAN_LINE = re.compile(r"^open\s+tcp\s+(\d+)\s+([0-9.]+)\b")
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;

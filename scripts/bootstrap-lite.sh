@@ -115,8 +115,8 @@ for k in (
     "INTEGRATION__MQTT__COMMAND_TOPIC_TEMPLATE",
 ):
     s = re.sub(
-        rf"(^\\s*-\\s*{re.escape(k)}=)[^\\s]*/gateway/",
-        rf"\\1{prefix}/gateway/",
+        rf"(^\s*-\s*{re.escape(k)}=)[^\s]*/gateway/",
+        rf"\g<1>{prefix}/gateway/",
         s,
         flags=re.MULTILINE,
     )
