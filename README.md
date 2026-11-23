@@ -11,6 +11,13 @@ small field nodes. The field nodes report over LoRa to a gateway on the edge
 computer. The site agent on that computer decides fan speeds and sends the
 commands back the same way.
 
+The system is split across three places:
+- **This repo:** the edge computer's stack.
+- **[edge101-lorawan-node](https://github.com/neddia/edge101-lorawan-node):**
+  the field-node firmware (ESP-IDF, C), including the E2 binary protocol.
+- **[`site-agent-e2/`](site-agent-e2/):** the host side of that protocol,
+  taken from site-agent before LoRaWAN was removed.
+
 ```mermaid
 flowchart LR
   subgraph field["Field (per fan bank)"]
@@ -73,6 +80,7 @@ flowchart LR
 | `edge-stacks/app/` | site-agent container |
 | `site-pack/` | Per-site config and secrets template (real values stay off-box) |
 | `scripts/` | Gateway setup, bootstrap, ChirpStack seeding, site-pack generator, miner scan |
+| `site-agent-e2/` | Host side of the E2 protocol: encoders, fragmenting, LoRa/TCP dispatch, provisioning, ingest, tests (reference only) |
 | `early/pid-infra/` | The Aug 2025 first version, with its history ([notes](early/pid-infra/NOTES.md)) |
 
 [SETUP.md](SETUP.md) has the full per-site order of operations.
@@ -82,6 +90,7 @@ flowchart LR
 | When | Version | What changed |
 |---|---|---|
 | Aug 2025 | [`early/pid-infra/`](early/pid-infra/) | First boot script: Tailscale, UFW, Docker, InfluxDB + ChirpStack, a daily self-test |
+| Sep 2025 – Jan 2026 | [edge101-lorawan-node](https://github.com/neddia/edge101-lorawan-node) | Field-node firmware: E2 v2 protocol, node-run polling, safe-speed fallback |
 | Dec 2025 | edge-stack | Separate Compose stacks per concern, the site-pack model, gateway and device seeding |
 | Jan 2026 | edge-stack | Hardened gateway bring-up, CLI-based ChirpStack keys, monitoring and alerts |
 | Later | [ipc-stack](https://github.com/neddia/ipc-stack) + site-agent | Provisioning, health, lockdown and end-to-end tests; LoRaWAN dropped |
@@ -91,4 +100,6 @@ flowchart LR
 - Tailscale enrollment and OS credentials are still manual steps.
 - Services publish their ports (3000, 8000, 8086) on every interface. A real
   deployment should bind them to localhost or the Tailscale interface.
-- There are no automated tests. ipc-stack added an end-to-end test suite.
+- The stack scripts have no automated tests. The host-side E2 code has
+  integration tests in `site-agent-e2/tests/`, and ipc-stack added an
+  end-to-end test suite.
