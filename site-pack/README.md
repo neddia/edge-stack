@@ -10,7 +10,7 @@ What to place here
 - `chirpstack-devices.yml` (optional) – DevEUIs + AppKeys if you want to drive provisioning from a seed.
 - `storage/` – site-config, registries, miner db, and profiles (see `storage/README.md`).
 - Optional helpers in `.secrets/`: `.env.grafana` (admin creds) and `.env.smtp` (mail settings) consumed by the data stack.
-- Optional: `chirpstack.api_key` / `chirpstack.app_id` (if you run the ChirpStack init overlay or store them manually for the agent).
+- Optional: `chirpstack.api_key` / `chirpstack.app_id` (bootstrap-lite.sh writes the API key; or store them manually).
 
 Workflow notes
 --------------

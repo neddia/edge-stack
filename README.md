@@ -1,70 +1,94 @@
-Edge stack scaffold
-===================
+# edge-stack: a LoRaWAN edge stack for fan control
 
-This folder holds the infra pieces that *aren’t* in the site-agent repo: Docker stacks for Influx + ChirpStack + the agent, plus a “site pack” to stage per-site config/secrets.
+> **Archived.** This is the Dec 2025 – Jan 2026 version of the edge stack.
+> The provisioning, health checks and SSH lockdown grew into
+> [ipc-stack](https://github.com/neddia/ipc-stack), and the control software
+> became site-agent. It's kept here as a record of the LoRaWAN design. It isn't maintained.
 
-Layout
-------
-- `edge-stacks/data/docker-compose.yml` – InfluxDB with first-boot init + token minting (token lands in `site-pack/.secrets/influx.token`) and Grafana with Influx datasource provisioning.
-- `edge-stacks/lorawan/` – place the upstream `chirpstack-docker` repo here.
-- `edge-stacks/app/docker-compose.yml` – site-agent container wired to `site-pack/.env`, `site-pack/.secrets`, and `site-pack/storage`.
-- `site-pack/` – per-site bundle (not for git). `.env` + `.secrets/` + `storage/` live here; see `site-pack/README.md`.
-- `scripts/` – helper scripts for bootstrap and packaging.
-- `scripts/setup-lora-gateway.sh` – stamps the concentrator EUI into `global_conf.json` (expects sx1302_hal built and `/dev/ht1303-0` symlink).
-- `scripts/lora-pkt-fwd.service` – systemd unit template for the packet forwarder.
-- `scripts/init-chirpstack-config.sh` – generates `chirpstack.toml` from a template with a fresh secret (no overwrite if it already exists).
-- `bootstrap-lite.sh` will install `masscan` on the host and set capabilities for miner discovery if it is not already present.
-- `scripts/cs-seed.py` – seeds ChirpStack (gateway/app/device profile/devices) from `site-pack/storage/chirpstack-devices.yml`.
+One edge computer per site runs everything needed to read and command VFD-driven
+cooling fans over LoRaWAN. The VFDs and PLCs connect over RS485 or Ethernet to
+small field nodes. The field nodes report over LoRa to a gateway on the edge
+computer. The site agent on that computer decides fan speeds and sends the
+commands back the same way.
 
-Quick start (local dev / staging an IPC)
-----------------------------------------
-1) Fill the site pack (single site at a time):
-   - Copy `.env.example` → `.env` and fill secrets/endpoints.
-   - Replace `site-pack/.secrets/influx.*` with real admin creds/tokens.
-   - Fill `site-pack/.secrets/.env.grafana` and (if needed) `.env.smtp` for Grafana auth/SMTP.
-   - (Optional) Copy `site-pack/lorawan.env.example` → `site-pack/lorawan.env` and fill ChirpStack admin/tenant/app vars so the init overlay can create an API key/app.
-   - Copy a real `site-config.yml`, profiles, and any registries into `site-pack/storage/`.
+```mermaid
+flowchart LR
+  subgraph field["Field (per fan bank)"]
+    VFD["VFDs / PLCs"] -- "RS485 (Modbus) or Ethernet" --> NODE["DFRobot Edge101<br/>+ Wio-E5 LoRa module"]
+  end
+  NODE -- "LoRaWAN US915" --> GW
+  subgraph ipc["Edge computer (Ubuntu, Docker)"]
+    GW["Heltec HT1303 USB concentrator<br/>Semtech packet forwarder"] --> CS["ChirpStack v4<br/>+ Mosquitto + Postgres"]
+    CS -- "MQTT uplinks / downlinks" --> AGENT["site-agent<br/>polling, optimizer, fail-safes"]
+    AGENT --> INFLUX[("InfluxDB")]
+    TEL["Telegraf<br/>host + container metrics"] --> INFLUX
+    INFLUX --> GRAF["Grafana<br/>dashboards + email alerts"]
+    SCAN["miner scan timer<br/>(masscan)"] --> AGENT
+  end
+```
 
-2) Prep ChirpStack stack:
-   - `cd edge-stacks/lorawan && git clone https://github.com/chirpstack/chirpstack-docker.git .`
-   - Optionally prepare an `.env` there with `CHIRPSTACK_*` values if you want the init overlay.
-   - If you use a `chirpstack.toml.template`, generate `chirpstack.toml` with a fresh secret before starting.
-   - Move the repo under `edge-stacks/lorawan` so `bootstrap-lite.sh` can find it.
-   - `bootstrap-lite.sh` will call `scripts/init-chirpstack-config.sh` once to generate `chirpstack.toml` if missing.
-   - If `docker-compose.yml` is missing, `bootstrap-lite.sh` will auto-clone `chirpstack-docker` into `edge-stacks/lorawan`.
-   - `bootstrap-lite.sh` will run `scripts/cs-seed.py` if `site-pack/storage/chirpstack-devices.yml` exists and `site-pack/.secrets/chirpstack.api_key` is present (uses gateway EUI from `site-pack/.secrets/gateway_eui` if available).
-   - If `site-pack/lorawan.env` exists, `bootstrap-lite.sh` copies it to `edge-stacks/lorawan/.env` so the init overlay picks up your admin/tenant vars automatically.
+## What it does
 
-3) Bring everything up (creates shared network automatically):
-   - `./scripts/bootstrap-lite.sh`
-   - Order: data → lorawan → app.
+- **Brings up the radio side.** `scripts/setup-lora-gateway.sh` fetches and builds
+  the Semtech `sx1302_hal` and installs a udev rule so the concentrator always
+  appears as `/dev/ht1303-0`. It reads the gateway EUI from the chip, retrying
+  with a timeout, then writes the packet-forwarder config and installs the
+  forwarder as a systemd service.
+- **Registers every device in ChirpStack.** `scripts/cs-seed.py` creates the
+  gateway, the application, the device profile and each node from a YAML file.
+  It's idempotent: re-running it updates a device profile that has drifted
+  instead of skipping it.
+- **Keeps credentials scoped.** InfluxDB first-boot setup runs inside Compose.
+  A one-shot init container then mints a read/write token for the agent's
+  bucket only. Admin credentials stay in a per-site "site pack" that never
+  goes in git.
+- **Watches itself.** Grafana comes pre-provisioned with dashboards for host
+  and container health, plus site-agent health: miner fleet seen vs. expected,
+  poll errors, data staleness, and how often the optimizer is publishing
+  plans. It also has alert rules for CPU, memory, disk and a miner-fleet
+  shortfall over 30%.
+- **Starts from one command.** `scripts/bootstrap-lite.sh` brings up the data,
+  LoRaWAN and app stacks in order. It creates the ChirpStack API key through
+  the CLI, seeds the devices, and loads the site-agent image from a tarball,
+  so a site doesn't need registry access.
 
-4) site-agent image:
-   - `edge-stacks/app` defaults to `SITE_AGENT_IMAGE=ghcr.io/your-org/site-agent:latest`.
-   - `scripts/gen-site-pack.sh` builds and exports `../images/site-agent.tar`; `bootstrap-lite.sh` will load `images/site-agent.tar` if the image is not already present.
+## Control and fail-safes (from `site-pack/storage/site-config.example.yml`)
 
-Backups / restore
------------------
-- Treat `site-pack/storage/control-registry.json` and `site-pack/storage/provision-registry.json` as runtime state you want to keep; after UI changes, copy them back into your per-site seed repo.
-- If `miners.sqlite` is absent on a fresh box, the agent can seed ranges from `site-config.yml`; still back up `miners.sqlite` if you rely on UI edits.
-- `.env` and `.secrets/` never belong in git; scp them per-site when provisioning.
+- **Safe speed on lost contact.** Each VFD has a `safe` block (`hz: 48`,
+  `ttl_s: 15`). If a node gets no fresh command within 15 seconds, the fans
+  drop to 48 Hz, a known-safe speed.
+- **Optimizer limits.** Every 5 minutes the optimizer fits recent data and picks
+  fan speeds, inside hard limits: a min/max Hz, a ramp limit, a deadband so
+  it doesn't chase noise, and a cap on how fast it can raise speed to handle
+  a hotspot.
+- **Redundant nodes.** Field nodes are configured in primary/secondary pairs.
+  Each node has a preferred link (LoRa) and an optional Ethernet fallback.
 
-Notes
------
-- The old `readme` file is kept for history, but this `README.md` is the canonical layout going forward.
-- The shared Docker bits rely on the external network `edge_core`; `scripts/bootstrap-lite.sh` will create it if missing.
-- Miner discovery: `bootstrap-lite.sh` installs `masscan` on the host, sets caps, and installs a `setpoint-scan-miners` systemd timer that writes to `site-pack/storage/miners.sqlite`.
-- LoRa gateway: install a udev rule to expose the Heltec as `/dev/ht1303-0`, build `sx1302_hal`, then run `setup-lora-gateway.sh` (bootstrap calls it if installed). Install `scripts/lora-pkt-fwd.service` into `/etc/systemd/system/` if you want the packet forwarder on boot.
-- ChirpStack seeding: provide `site-pack/storage/chirpstack-devices.yml`, `site-pack/.secrets/chirpstack.api_key`, and (optionally) `site-pack/.secrets/gateway_eui` to auto-create gateway/app/devices.
-  - Optional: set `CHIRPSTACK_DEFAULT_APP_KEY` if you want a single app key used for any device missing an explicit one.
-- Suggested udev rule (edit VID/PID if different):
-  ```
-  sudo tee /etc/udev/rules.d/80-heltec-ht1303.rules >/dev/null <<'EOF'
-  SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", SYMLINK+="ht1303-0"
-  EOF
-  sudo udevadm control --reload-rules && sudo udevadm trigger
-  ```
-- Config separation guideline:
-  - `site-config.yml` for versioned topology/defaults,
-  - `.env` for secrets/endpoints,
-  - `registry_*.json` + `miners.sqlite` for runtime state you back up after UI edits.
+## Layout
+
+| Path | What's in it |
+|---|---|
+| `edge-stacks/data/` | InfluxDB (setup + token init), Grafana (dashboards, alerts), Telegraf |
+| `edge-stacks/lorawan/` | Override for the upstream [chirpstack-docker](https://github.com/chirpstack/chirpstack-docker) repo (cloned here by bootstrap), US915 region config |
+| `edge-stacks/app/` | site-agent container |
+| `site-pack/` | Per-site config and secrets template (real values stay off-box) |
+| `scripts/` | Gateway setup, bootstrap, ChirpStack seeding, site-pack generator, miner scan |
+| `early/pid-infra/` | The Aug 2025 first version, with its history ([notes](early/pid-infra/NOTES.md)) |
+
+[SETUP.md](SETUP.md) has the full per-site order of operations.
+
+## History
+
+| When | Version | What changed |
+|---|---|---|
+| Aug 2025 | [`early/pid-infra/`](early/pid-infra/) | First boot script: Tailscale, UFW, Docker, InfluxDB + ChirpStack, a daily self-test |
+| Dec 2025 | edge-stack | Separate Compose stacks per concern, the site-pack model, gateway and device seeding |
+| Jan 2026 | edge-stack | Hardened gateway bring-up, CLI-based ChirpStack keys, monitoring and alerts |
+| Later | [ipc-stack](https://github.com/neddia/ipc-stack) + site-agent | Provisioning, health, lockdown and end-to-end tests; LoRaWAN dropped |
+
+## Known gaps (why it's archived, not "done")
+
+- Tailscale enrollment and OS credentials are still manual steps.
+- Services publish their ports (3000, 8000, 8086) on every interface. A real
+  deployment should bind them to localhost or the Tailscale interface.
+- There are no automated tests. ipc-stack added an end-to-end test suite.

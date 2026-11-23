@@ -147,7 +147,7 @@ Fill in:
 - storage/profiles/ (optional; only if you want site-local overrides; set PROFILES_DIR=/app/storage/profiles in site-pack/.env)
 - storage/chirpstack-devices.yml (DevEUIs, names; app_key can stay default)
 - site-pack/lorawan.env (ChirpStack tenant id; admin defaults to $CS_ADMIN_EMAIL with generated password)
-- site-pack/.secrets/chirpstack.api_key (or let init overlay create it)
+- site-pack/.secrets/chirpstack.api_key (bootstrap-lite.sh creates it via the ChirpStack CLI)
 - Optional: storage/registry_*.json, miners.sqlite if restoring
 EOF
 

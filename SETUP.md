@@ -19,7 +19,7 @@ These live under `site-pack/` on the IPC but should originate from your off-box 
   - `grafana.admin.user`, `grafana.admin.pass` — generated.
   - `.env.grafana` — filled with admin creds by generator.
   - `.env.smtp` — placeholder; fill manually if using SMTP.
-  - `chirpstack.api_key` — from CS init overlay or paste manually (not generated).
+  - `chirpstack.api_key` — created by `bootstrap-lite.sh` through the ChirpStack CLI, or paste one manually.
   - `gateway_eui` — written by `setup-lora-gateway.sh` at runtime.
   - Optional: `docker.ghcr.user` / `docker.ghcr.token` if you want bootstrap to `docker login` (not wired yet).
 - `site-pack/lorawan.env` — overlay env for ChirpStack init (admin email/password, tenant ID, app name). Generator writes placeholders; fill manually.
@@ -49,7 +49,7 @@ You must still supply/edit:
 - ChirpStack admin email/password/tenant ID in `lorawan.env`.
 - site-config.yml, profiles (only if site-local), registries, miners.sqlite.
 - Tailscale auth key, OS password, GHCR PAT (if used), SMTP creds.
-- ChirpStack API key: either let the init overlay create it (needs admin creds in lorawan.env) or paste one into `.secrets/chirpstack.api_key`.
+- ChirpStack API key: `bootstrap-lite.sh` creates it through the ChirpStack CLI; or paste one into `.secrets/chirpstack.api_key`.
 
 End-to-end order of operations (per IPC)
 ----------------------------------------
@@ -72,10 +72,8 @@ End-to-end order of operations (per IPC)
 
 Script/catalog reference
 ------------------------
-- ChirpStack init overlay vars (in `edge-stacks/lorawan/.env`):
+- ChirpStack env (in `edge-stacks/lorawan/.env`):
   - `CHIRPSTACK_URL` (default http://chirpstack:8080)
-  - `CHIRPSTACK_ADMIN_EMAIL` (manual; only used if you still run the init overlay)
-  - `CHIRPSTACK_ADMIN_PASSWORD` (manual; only used if you still run the init overlay)
   - `CHIRPSTACK_TENANT_ID` (manual)
   - `CHIRPSTACK_APP_NAME` (defaults to site app)
 - ChirpStack seeder (`cs-seed.py`):

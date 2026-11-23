@@ -8,3 +8,5 @@ site-pack/storage/profiles/
 site-pack/lorawan.env
 artifacts/
 *.tar.gz
+__pycache__/
+*.pyc
